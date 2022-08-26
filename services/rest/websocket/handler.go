@@ -82,6 +82,9 @@ func (h *Handler) HandlerWSEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	h.PingChannel <- conn
+	resChannel := make(chan AckInfo)
+	go h.AckHandler(conn, resChannel)
+
 	for {
 		messageType, message, err := conn.ReadMessage()
 		if err != nil {
@@ -110,9 +113,6 @@ func (h *Handler) HandlerWSEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		metrics.Increment("batches_read_total", fmt.Sprintf("status=success,conn_group=%s", conn.Identifier.Group))
 		h.sendEventCounters(payload.Events, conn.Identifier.Group)
-		resChannel := make(chan AckInfo)
-
-		go h.AckHandler(conn, resChannel)
 
 		h.collector.Collect(r.Context(), &collection.CollectRequest{
 			ConnectionIdentifier: conn.Identifier,
