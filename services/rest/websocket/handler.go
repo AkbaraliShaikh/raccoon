@@ -27,6 +27,12 @@ type Handler struct {
 	PingChannel chan connection.Conn
 }
 
+type AckInfo struct {
+	MessageType int
+	RequestGuid string
+	Err         error
+}
+
 func getSerDeMap() map[int]*serDe {
 	serDeMap := make(map[int]*serDe)
 	serDeMap[websocket.BinaryMessage] = &serDe{
@@ -67,7 +73,7 @@ func (h *Handler) Table() *connection.Table {
 	return h.upgrader.Table
 }
 
-//HandlerWSEvents handles the upgrade and the events sent by the peers
+// HandlerWSEvents handles the upgrade and the events sent by the peers
 func (h *Handler) HandlerWSEvents(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.upgrader.Upgrade(w, r)
 	if err != nil {
@@ -104,37 +110,46 @@ func (h *Handler) HandlerWSEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		metrics.Increment("batches_read_total", fmt.Sprintf("status=success,conn_group=%s", conn.Identifier.Group))
 		h.sendEventCounters(payload.Events, conn.Identifier.Group)
-		resChannel := make(chan struct{}, 1)
+		resChannel := make(chan AckInfo)
+
+		go h.AckHandler(conn, resChannel)
+
 		h.collector.Collect(r.Context(), &collection.CollectRequest{
 			ConnectionIdentifier: conn.Identifier,
 			TimeConsumed:         timeConsumed,
 			SendEventRequest:     payload,
 			AckFunc:              h.Ack(conn, resChannel, s, messageType, payload.ReqGuid),
 		})
-		<-resChannel
+
+		//<-resChannel
 	}
 }
 
-func (h *Handler) Ack(conn connection.Conn, resChannel chan struct{}, s serialization.SerializeFunc, messageType int, reqGuid string) collection.AckFunc {
+func (h *Handler) AckHandler(conn connection.Conn, ch <-chan AckInfo) {
+	for c := range ch {
+		if c.Err != nil {
+			writeFailedResponse(conn, h.serdeMap[c.MessageType].serializer, c.MessageType, c.RequestGuid, c.Err)
+			continue
+		}
+		writeSuccessResponse(conn, h.serdeMap[c.MessageType].serializer, c.MessageType, c.RequestGuid)
+	}
+}
+
+func (h *Handler) Ack(conn connection.Conn, resChannel chan AckInfo, s serialization.SerializeFunc, messageType int, reqGuid string) collection.AckFunc {
 	switch config.Event.Ack {
 	case config.Asynchronous:
 		writeSuccessResponse(conn, s, messageType, reqGuid)
-		resChannel <- struct{}{}
 		return nil
 	case config.Synchronous:
 		return func(err error) {
-			if err != nil {
-				logger.Errorf("[websocket.Ack] publish message failed for %s: %v", conn.Identifier.Group, err)
-				writeFailedResponse(conn, s, messageType, reqGuid, err)
-				resChannel <- struct{}{}
-				return
+			resChannel <- AckInfo{
+				MessageType: messageType,
+				RequestGuid: reqGuid,
+				Err:         err,
 			}
-			writeSuccessResponse(conn, s, messageType, reqGuid)
-			resChannel <- struct{}{}
 		}
 	default:
 		writeSuccessResponse(conn, s, messageType, reqGuid)
-		resChannel <- struct{}{}
 		return nil
 	}
 }
