@@ -28,9 +28,10 @@ type Handler struct {
 }
 
 type AckInfo struct {
-	MessageType int
-	RequestGuid string
-	Err         error
+	MessageType  int
+	RequestGuid  string
+	Err          error
+	TimeConsumed time.Time
 }
 
 func getSerDeMap() map[int]*serDe {
@@ -118,7 +119,7 @@ func (h *Handler) HandlerWSEvents(w http.ResponseWriter, r *http.Request) {
 			ConnectionIdentifier: conn.Identifier,
 			TimeConsumed:         timeConsumed,
 			SendEventRequest:     payload,
-			AckFunc:              h.Ack(conn, resChannel, s, messageType, payload.ReqGuid),
+			AckFunc:              h.Ack(conn, resChannel, s, messageType, payload.ReqGuid, timeConsumed),
 		})
 
 		//<-resChannel
@@ -128,14 +129,18 @@ func (h *Handler) HandlerWSEvents(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AckHandler(conn connection.Conn, ch <-chan AckInfo) {
 	for c := range ch {
 		if c.Err != nil {
+			connectionTime := time.Since(c.TimeConsumed)
+			metrics.Timing("event_rtt_ms", connectionTime.Milliseconds(), "")
 			writeFailedResponse(conn, h.serdeMap[c.MessageType].serializer, c.MessageType, c.RequestGuid, c.Err)
 			continue
 		}
+		connectionTime := time.Since(c.TimeConsumed)
+		metrics.Timing("event_rtt_ms", connectionTime.Milliseconds(), "")
 		writeSuccessResponse(conn, h.serdeMap[c.MessageType].serializer, c.MessageType, c.RequestGuid)
 	}
 }
 
-func (h *Handler) Ack(conn connection.Conn, resChannel chan AckInfo, s serialization.SerializeFunc, messageType int, reqGuid string) collection.AckFunc {
+func (h *Handler) Ack(conn connection.Conn, resChannel chan AckInfo, s serialization.SerializeFunc, messageType int, reqGuid string, timeConsumed time.Time) collection.AckFunc {
 	switch config.Event.Ack {
 	case config.Asynchronous:
 		writeSuccessResponse(conn, s, messageType, reqGuid)
@@ -143,9 +148,10 @@ func (h *Handler) Ack(conn connection.Conn, resChannel chan AckInfo, s serializa
 	case config.Synchronous:
 		return func(err error) {
 			resChannel <- AckInfo{
-				MessageType: messageType,
-				RequestGuid: reqGuid,
-				Err:         err,
+				MessageType:  messageType,
+				RequestGuid:  reqGuid,
+				Err:          err,
+				TimeConsumed: timeConsumed,
 			}
 		}
 	default:
