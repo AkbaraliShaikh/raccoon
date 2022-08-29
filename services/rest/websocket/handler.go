@@ -28,10 +28,11 @@ type Handler struct {
 }
 
 type AckInfo struct {
-	MessageType  int
-	RequestGuid  string
-	Err          error
-	TimeConsumed time.Time
+	MessageType     int
+	RequestGuid     string
+	Err             error
+	TimeConsumed    time.Time
+	AckTimeConsumed time.Time
 }
 
 func getSerDeMap() map[int]*serDe {
@@ -128,6 +129,8 @@ func (h *Handler) HandlerWSEvents(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) AckHandler(conn connection.Conn, ch <-chan AckInfo) {
 	for c := range ch {
+		act := time.Since(c.AckTimeConsumed)
+		metrics.Timing("act_event_rtt_ms", act.Milliseconds(), "")
 		if c.Err != nil {
 			connectionTime := time.Since(c.TimeConsumed)
 			metrics.Timing("event_rtt_ms", connectionTime.Milliseconds(), "")
@@ -148,10 +151,11 @@ func (h *Handler) Ack(conn connection.Conn, resChannel chan AckInfo, s serializa
 	case config.Synchronous:
 		return func(err error) {
 			resChannel <- AckInfo{
-				MessageType:  messageType,
-				RequestGuid:  reqGuid,
-				Err:          err,
-				TimeConsumed: timeConsumed,
+				MessageType:     messageType,
+				RequestGuid:     reqGuid,
+				Err:             err,
+				TimeConsumed:    timeConsumed,
+				AckTimeConsumed: time.Now(),
 			}
 		}
 	default:

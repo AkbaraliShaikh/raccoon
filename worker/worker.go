@@ -45,6 +45,8 @@ func (w *Pool) StartWorkers() {
 				//@TODO - Should add integration tests to prove that the worker receives the same message that it produced, on the delivery channel it created
 
 				err := w.kafkaProducer.ProduceBulk(request.GetEvents(), request.ConnectionIdentifier.Group, deliveryChan)
+				connectionTime := time.Since(batchReadTime)
+				metrics.Timing("kafka_producebulk_tt_ms", connectionTime.Milliseconds(), "")
 
 				if request.AckFunc != nil {
 					request.AckFunc(err)
@@ -75,7 +77,7 @@ func (w *Pool) StartWorkers() {
 }
 
 // FlushWithTimeOut waits for the workers to complete the pending the messages
-//to be flushed to the publisher within a timeout.
+// to be flushed to the publisher within a timeout.
 // Returns true if waiting timed out, meaning not all the events could be processed before this timeout.
 func (w *Pool) FlushWithTimeOut(timeout time.Duration) bool {
 	c := make(chan struct{})
