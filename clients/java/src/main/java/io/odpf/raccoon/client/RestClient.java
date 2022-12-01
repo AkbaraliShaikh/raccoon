@@ -26,7 +26,7 @@ import java.util.UUID;
 /**
  * Class for the http client implementation.
  */
- class RestClient implements RaccoonClient {
+class RestClient implements RaccoonClient {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RestClient.class);
 
@@ -112,7 +112,8 @@ import java.util.UUID;
     }
 
     /**
-     * Creates the new HTTP client and set the retry handler with the provided settings.
+     * Creates the new HTTP client and set the retry handler with the provided
+     * settings.
      *
      * @return The new HTTP client.
      */
@@ -125,10 +126,13 @@ import java.util.UUID;
 
                     @Override
                     public boolean retryRequest(HttpResponse response, int executionCount, HttpContext context) {
-                        LOGGER.warn("Retrying the http request, retry-count:{}, response-code:{}", executionCount,
-                                response.getStatusLine().getStatusCode());
-                        return executionCount < restConfig.getRetryMax()
-                                && response.getStatusLine().getStatusCode() != HttpStatusCodes.STATUS_CODE_OK;
+
+                        if (executionCount < restConfig.getRetryMax() && response.getStatusLine().getStatusCode() != HttpStatusCodes.STATUS_CODE_OK) {
+                            LOGGER.warn("Retrying the http request, retry-count:{}, response-code:{}", executionCount, response.getStatusLine().getStatusCode());
+                            return true;
+                        }
+
+                        return false;
                     }
 
                     @Override
